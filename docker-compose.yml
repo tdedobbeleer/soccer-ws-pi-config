@@ -1,0 +1,71 @@
+version: '3'
+
+services:
+  postgres:
+    image: postgres:12-alpine
+    restart: always
+    volumes:
+      - ./data:/var/lib/postgresql/data
+      - ./backup:/backup
+    env_file:
+      - ./config/$ENV_PROFILE/pg-conf.env
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sqozfvzq"]
+      interval: 60s
+      timeout: 5s
+      retries: 10
+    logging:
+        driver: syslog
+        options:
+          tag: svk-${ENV_PROFILE}-postgres
+          syslog-address: "${SYSLOG_ADDRESS}"
+          syslog-tls-ca-cert: "${SYSLOG_TLS_CERT}"
+
+  app:
+    image: tdedobbeleer/soccer-ws:${SOCCER_VERSION}
+    restart: always
+    environment:
+      - PORT=${PORT}
+    env_file:
+      - ./config/$ENV_PROFILE/conf.env
+    links:
+      - "postgres:postgres"
+    healthcheck:
+      test: curl --fail http://localhost:8080/actuator/health || exit 1
+      interval: 60s
+      retries: 5
+      timeout: 10s
+    logging:
+      driver: syslog
+      options:
+        tag: svk-${ENV_PROFILE}-soccer-ws
+        syslog-address: "${SYSLOG_ADDRESS}"
+        syslog-tls-ca-cert: "${SYSLOG_TLS_CERT}"
+        
+  web:
+    image: owasp/modsecurity-crs:nginx-alpine
+    ports:
+      - 443:443
+    restart: always
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    environment:
+      - BACKEND=http://app:${PORT}
+      - PROXY_SSL_CERT=/etc/letsencrypt/live/${DOMAIN}/fullchain.pem
+      - PROXY_SSL_CERT_KEY=/etc/letsencrypt/live/${DOMAIN}/privkey.pem
+      - SSL_PORT=443
+      - NGINX_ALWAYS_TLS_REDIRECT=on
+      - SERVER_NAME=${DOMAIN}
+      - ALLOWED_METHODS=GET POST PUT DELETE HEAD OPTIONS
+      - MAX_NUM_ARGS=128
+      - ARG_NAME_LENGTH=50
+      - ARG_LENGTH=200
+      - TOTAL_ARG_LENGTH=6400
+    links:
+      - "app:app"
+    logging:
+        driver: syslog
+        options:
+          tag: svk-${ENV_PROFILE}-nginx
+          syslog-address: "${SYSLOG_ADDRESS}"
+          syslog-tls-ca-cert: "${SYSLOG_TLS_CERT}"
